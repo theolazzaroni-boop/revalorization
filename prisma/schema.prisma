@@ -1,0 +1,380 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────
+// MULTI-TENANT
+// ─────────────────────────────────────────────
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  address   String?
+  plan      Plan     @default(STARTER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users            User[]
+  partners         Partner[]
+  materials        Material[]
+  surplusListings  SurplusListing[]
+  collections      Collection[]
+  vehicles         Vehicle[]
+  inboundLots      InboundLot[]
+  materialBatches  MaterialBatch[]
+  saleOrders       SaleOrder[]
+  traceEvents      TraceEvent[]
+}
+
+enum Plan {
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+// ─────────────────────────────────────────────
+// UTILISATEURS (staff du valorisateur)
+// ─────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String
+  email     String
+  name      String
+  role      UserRole @default(OPERATOR)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  collections Collection[]
+  traceEvents TraceEvent[]
+
+  @@unique([tenantId, email])
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+// ─────────────────────────────────────────────
+// PARTENAIRES (cédants ET/OU acheteurs)
+// ─────────────────────────────────────────────
+
+model Partner {
+  id           String      @id @default(cuid())
+  tenantId     String
+  name         String
+  siret        String?
+  address      String?
+  type         PartnerType
+  contactEmail String?
+  contactPhone String?
+  portalToken  String?     @unique // accès portail / lien d'invitation
+  userId       String?     @unique // Supabase auth user ID (une fois inscrit)
+  email        String?             // email principal du contact
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  surplusListings SurplusListing[]
+  saleOrders      SaleOrder[]
+  traceEvents     TraceEvent[]
+}
+
+enum PartnerType {
+  SUPPLIER  // cédant uniquement
+  BUYER     // acheteur uniquement
+  BOTH      // les deux
+}
+
+// ─────────────────────────────────────────────
+// RÉFÉRENTIEL MATIÈRES
+// ─────────────────────────────────────────────
+
+model Material {
+  id             String           @id @default(cuid())
+  tenantId       String
+  name           String
+  category       MaterialCategory
+  unit           MaterialUnit
+  co2FactorPerUnit Float          // kg CO2 évité par unité valorisée
+  description    String?
+  createdAt      DateTime         @default(now())
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  surplusListings SurplusListing[]
+  inboundLots     InboundLot[]
+  materialBatches MaterialBatch[]
+}
+
+enum MaterialCategory {
+  PLASTIC
+  METAL
+  WOOD
+  ELECTRONIC
+  PAPER
+  GLASS
+  TEXTILE
+  OTHER
+}
+
+enum MaterialUnit {
+  KG
+  TONNE
+  M3
+  UNIT
+}
+
+// ─────────────────────────────────────────────
+// FLUX ENTRANTS
+// ─────────────────────────────────────────────
+
+model SurplusListing {
+  id                 String               @id @default(cuid())
+  tenantId           String
+  partnerId          String               // cédant
+  materialId         String
+  quantityEstimated  Float
+  condition          String?
+  description        String?
+  photos             String[]             // URLs Supabase Storage
+  locationAddress    String?
+  preferredDate      DateTime?
+  status             SurplusListingStatus @default(DRAFT)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
+  partner          Partner           @relation(fields: [partnerId], references: [id])
+  material         Material          @relation(fields: [materialId], references: [id])
+  collectionItems  CollectionItem[]
+  inboundLots      InboundLot[]
+}
+
+enum SurplusListingStatus {
+  DRAFT
+  SUBMITTED
+  SCHEDULED
+  COLLECTED
+  CANCELLED
+}
+
+model Vehicle {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  plate     String?
+  type      String?
+  createdAt DateTime @default(now())
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id])
+  collections Collection[]
+}
+
+model Collection {
+  id            String           @id @default(cuid())
+  tenantId      String
+  scheduledDate DateTime
+  actualDate    DateTime?
+  operatorId    String?
+  vehicleId     String?
+  notes         String?
+  status        CollectionStatus @default(SCHEDULED)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  operator        User?            @relation(fields: [operatorId], references: [id])
+  vehicle         Vehicle?         @relation(fields: [vehicleId], references: [id])
+  collectionItems CollectionItem[]
+  checklistItems  ChecklistItem[]
+}
+
+enum CollectionStatus {
+  SCHEDULED
+  READY
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model CollectionItem {
+  id               String  @id @default(cuid())
+  collectionId     String
+  surplusListingId String
+  order            Int     @default(0)
+  scheduledTime    String?
+  note             String?
+
+  collection     Collection     @relation(fields: [collectionId], references: [id])
+  surplusListing SurplusListing @relation(fields: [surplusListingId], references: [id])
+
+  @@unique([collectionId, surplusListingId])
+}
+
+model ChecklistItem {
+  id           String   @id @default(cuid())
+  collectionId String
+  label        String
+  checked      Boolean  @default(false)
+  order        Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+}
+
+model InboundLot {
+  id               String         @id @default(cuid())
+  tenantId         String
+  surplusListingId String?
+  collectionId     String?
+  materialId       String
+  quantityActual   Float
+  qualityGrade     QualityGrade
+  receivedAt       DateTime       @default(now())
+  receivedById     String?
+  notes            String?
+  status           InboundLotStatus @default(RECEIVED)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  surplusListing SurplusListing? @relation(fields: [surplusListingId], references: [id])
+  material       Material        @relation(fields: [materialId], references: [id])
+
+  // Relation M-N vers MaterialBatch (un lot peut contribuer à plusieurs batchs)
+  materialBatchSources MaterialBatchSource[]
+}
+
+enum QualityGrade {
+  A
+  B
+  C
+}
+
+enum InboundLotStatus {
+  RECEIVED
+  PROCESSING
+  PROCESSED
+}
+
+// ─────────────────────────────────────────────
+// FLUX SORTANTS
+// ─────────────────────────────────────────────
+
+model MaterialBatch {
+  id         String              @id @default(cuid())
+  tenantId   String
+  materialId String
+  quantity   Float
+  producedAt DateTime            @default(now())
+  notes      String?
+  status     MaterialBatchStatus @default(AVAILABLE)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+
+  tenant      Tenant               @relation(fields: [tenantId], references: [id])
+  material    Material             @relation(fields: [materialId], references: [id])
+  sources     MaterialBatchSource[]
+  saleOrders  SaleOrder[]
+}
+
+enum MaterialBatchStatus {
+  AVAILABLE
+  RESERVED
+  SOLD
+}
+
+// Table de liaison InboundLot ↔ MaterialBatch (traçabilité origine)
+model MaterialBatchSource {
+  id              String @id @default(cuid())
+  materialBatchId String
+  inboundLotId    String
+
+  materialBatch MaterialBatch @relation(fields: [materialBatchId], references: [id])
+  inboundLot    InboundLot    @relation(fields: [inboundLotId], references: [id])
+
+  @@unique([materialBatchId, inboundLotId])
+}
+
+model SaleOrder {
+  id              String          @id @default(cuid())
+  tenantId        String
+  partnerId       String          // acheteur
+  materialBatchId String
+  quantity        Float
+  unitPrice       Float
+  totalPrice      Float
+  confirmedAt     DateTime?
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
+  status          SaleOrderStatus @default(DRAFT)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id])
+  partner       Partner       @relation(fields: [partnerId], references: [id])
+  materialBatch MaterialBatch @relation(fields: [materialBatchId], references: [id])
+}
+
+enum SaleOrderStatus {
+  DRAFT
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+// ─────────────────────────────────────────────
+// TRAÇABILITÉ ESG (log immuable)
+// ─────────────────────────────────────────────
+
+model TraceEvent {
+  id         String          @id @default(cuid())
+  tenantId   String
+  // Relation polymorphique gérée applicativement (entityType + entityId sans FK)
+  entityType TraceEntityType
+  entityId   String
+  eventType  TraceEventType
+  // Acteur : soit un user interne, soit un partenaire externe
+  userId     String?
+  partnerId  String?
+  metadata   Json?
+  createdAt  DateTime        @default(now()) // jamais modifié
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id])
+  user    User?    @relation(fields: [userId], references: [id])
+  partner Partner? @relation(fields: [partnerId], references: [id])
+}
+
+enum TraceEntityType {
+  SURPLUS_LISTING
+  COLLECTION
+  INBOUND_LOT
+  MATERIAL_BATCH
+  SALE_ORDER
+}
+
+enum TraceEventType {
+  SUBMITTED
+  SCHEDULED
+  READY
+  COLLECTED
+  RECEIVED
+  PROCESSING_STARTED
+  PROCESSED
+  LISTED_FOR_SALE
+  SOLD
+  SHIPPED
+  DELIVERED
+  CERTIFIED
+}
+
