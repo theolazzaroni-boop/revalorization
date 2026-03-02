@@ -21,7 +21,11 @@ export async function POST() {
 
   const partner = await prisma.partner.upsert({
     where: { portalToken: "test-token-fournisseur-123" },
-    update: {},
+    update: {
+      // Réinitialise le compte fournisseur pour pouvoir retester le flow d'inscription
+      userId: null,
+      email: null,
+    },
     create: {
       tenantId: tenant.id,
       name: "Entreprise Test SAS",
@@ -33,6 +37,12 @@ export async function POST() {
       portalToken: "test-token-fournisseur-123",
     },
   });
+
+  // Supprime les annonces de test précédentes pour repartir de zéro (respect FK order)
+  await prisma.collectionItem.deleteMany({
+    where: { surplusListing: { partnerId: partner.id } },
+  });
+  await prisma.surplusListing.deleteMany({ where: { partnerId: partner.id } });
 
   // Créer un User staff pour l'utilisateur actuellement connecté (s'il existe)
   const supabase = await createClient();
